@@ -1,0 +1,64 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=Outfit:wght@100..900&display=swap');
+
+@theme {
+  --color-dark-bg: #0d0d12;
+  --color-dark-card: #15151e;
+  --color-dark-surface: #1e1e2d;
+  
+  --color-neon-blue: #00D1FF;
+  --color-neon-green: #39FF14;
+  --color-neon-orange: #FF5A00;
+  
+  --color-text-primary: #f8f8f2;
+  --color-text-secondary: #9494b8;
+  
+  --font-mono: "Chakra Petch", monospace;
+  --font-sans: "Outfit", sans-serif;
+  --font-industrial: "Chakra Petch", sans-serif;
+  
+  --shadow-neon: 0 0 15px rgba(57, 255, 20, 0.2);
+}
+
+@property --angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@layer base {
+  body {
+    @apply bg-[var(--color-dark-bg)] text-[var(--color-text-primary)] font-sans m-0 antialiased selection:bg-[var(--color-neon-green)] selection:text-black;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-white/5 backdrop-blur-xl border border-white/10;
+  }
+  
+  .glass-card {
+    @apply bg-[var(--color-dark-card)]/80 backdrop-blur-lg border border-white/5 rounded-2xl shadow-2xl;
+  }
+
+  .premium-border {
+    @apply relative rounded-2xl p-[1px] overflow-hidden;
+    background: conic-gradient(from var(--angle), transparent 70%, var(--color-neon-green), transparent);
+    animation: rotate-border 4s linear infinite;
+  }
+
+  .premium-border-inner {
+    @apply rounded-[inherit] bg-[var(--color-dark-card)] h-full w-full;
+  }
+
+  .text-neon {
+    @apply text-[var(--color-neon-green)] tracking-[0.2em] uppercase font-bold;
+    text-shadow: 0 0 8px rgba(57, 255, 20, 0.5);
+  }
+
+  @keyframes rotate-border {
+    to {
+      --angle: 360deg;
+    }
+  }
+}

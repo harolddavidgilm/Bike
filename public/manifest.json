@@ -1,0 +1,16 @@
+{
+  "name": "BIKE Project - Tactical Fleet Management",
+  "short_name": "BIKE",
+  "description": "Premium Vehicle Management and Odometer OCR Analytics",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d0d12",
+  "theme_color": "#39FF14",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
