@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Camera, RefreshCw, AlertTriangle, CheckCircle } from 'lucide-react';
+import React, { useState } from 'react';
+import { Camera, RefreshCw, AlertTriangle } from 'lucide-react';
 
 interface OCRScannerProps {
   onCapture: (value: number) => void;

@@ -76,7 +76,7 @@ const Documents = () => {
 
     setIsUploading(true);
     const fileName = `${Date.now()}_${file.name}`;
-    const { data, error } = await supabase.storage
+    const { error } = await supabase.storage
       .from('documents')
       .upload(fileName, file);
 

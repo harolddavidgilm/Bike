@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Wrench, Clock, FileText, ChevronRight, Activity, Plus, AlertTriangle, CheckCircle2, Loader2, Calendar } from 'lucide-react';
+import { Wrench, Clock, FileText, ChevronRight, Activity, Plus, CheckCircle2, Loader2, Calendar } from 'lucide-react';
 
 const Maintenance = () => {
   const [vehicles, setVehicles] = useState<any[]>([]);

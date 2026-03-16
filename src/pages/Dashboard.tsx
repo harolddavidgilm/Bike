@@ -22,7 +22,7 @@ const Dashboard = () => {
   }, []);
 
   const fetchVehicle = async () => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('vehicles')
       .select('*')
       .limit(1)
