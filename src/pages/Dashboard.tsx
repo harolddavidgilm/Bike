@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { AlertTriangle, Fuel, Gauge, CheckSquare, Wrench } from 'lucide-react';
+import { AlertTriangle, Fuel, Gauge, Camera, Edit3, MapPin, Plus } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import OCRScanner from '../components/OCRScanner';
 
 interface Vehicle {
@@ -13,42 +15,180 @@ interface Vehicle {
 }
 
 const Dashboard = () => {
+  const { user } = useAuth();
+  const [isSelectionModalOpen, setIsSelectionModalOpen] = useState(false);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [isManualTypeModalOpen, setIsManualTypeModalOpen] = useState(false);
+  const [isTripFormOpen, setIsTripFormOpen] = useState(false);
+  const [isFuelFormOpen, setIsFuelFormOpen] = useState(false);
+  
+  const [manualValue, setManualValue] = useState<string>('');
+  const [fuelForm, setFuelForm] = useState({
+    km: '',
+    gallons: '',
+    price: '',
+    station: ''
+  });
+  const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0]);
+  
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Stats
+  const [monthlyExpense, setMonthlyExpense] = useState(0);
+  const [efficiency, setEfficiency] = useState<number | null>(null);
+  const [recentTransmissions, setRecentTransmissions] = useState<any[]>([]);
+
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    // 1. Fetch Vehicle
+    const { data: vData } = await supabase.from('vehicles').select('*').eq('user_id', user?.id).limit(1).single();
+    if (vData) {
+      setVehicle(vData);
+
+      // 2. Fetch Fuel Logs
+      const { data: fData } = await supabase
+        .from('fuel_logs')
+        .select('*')
+        .eq('vehicle_id', vData.id)
+        .order('created_at', { ascending: false });
+      
+      if (fData) {
+        // Calculate Monthly Expense
+        const startOfMonth = new Date();
+        startOfMonth.setDate(1);
+        startOfMonth.setHours(0,0,0,0);
+        
+        const monthlySum = fData
+          .filter(log => new Date(log.created_at) >= startOfMonth)
+          .reduce((sum, log) => sum + Number(log.total_price), 0);
+        setMonthlyExpense(monthlySum);
+
+        // Calculate Efficiency (KM per gallon)
+        if (fData.length >= 2) {
+          const l1 = fData[0];
+          const l2 = fData[1];
+          const kmDiff = l1.odometer_km - l2.odometer_km;
+          const gallons = Number(l1.gallons);
+          if (gallons > 0 && kmDiff > 0) {
+            setEfficiency(Number((kmDiff / gallons).toFixed(1)));
+          }
+        }
+      }
+
+      // 3. Fetch Trip Logs
+      const { data: tData } = await supabase
+        .from('trip_logs')
+        .select('*')
+        .eq('vehicle_id', vData.id)
+        .order('created_at', { ascending: false });
+      
+      if (tData) {
+        // Combinamos para Transmisiones Recientes
+      }
+      const combined = [
+        ...(fData || []).map(l => ({ ...l, type: 'FUEL', icon: Fuel, color: '[var(--color-neon-green)]' })),
+        ...(tData || []).map(l => ({ ...l, type: 'TRIP', icon: MapPin, color: '[var(--color-neon-blue)]' }))
+      ].sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+       .slice(0, 5);
+      
+      setRecentTransmissions(combined);
+    }
+    setLoading(false);
+  };
+
   useEffect(() => {
-    fetchVehicle();
+    fetchDashboardData();
   }, []);
 
-  const fetchVehicle = async () => {
-    const { data } = await supabase
-      .from('vehicles')
-      .select('*')
-      .limit(1)
-      .single();
+  const updateVehicleOdo = async (newValue: number) => {
+    if (!vehicle) return;
+    const { error } = await supabase.from('vehicles').update({ odometer: newValue }).eq('id', vehicle.id);
+    if (!error) setVehicle({ ...vehicle, odometer: newValue });
+  };
 
-    if (data) setVehicle(data);
-    setLoading(false);
+  const handleTripRegistry = async () => {
+    if (!vehicle || !manualValue) return;
+    const newKm = parseInt(manualValue, 10);
+    if (isNaN(newKm)) return;
+    
+    // VALIDACIÓN: Permitir KM menor con confirmación
+    if (newKm < vehicle.odometer) {
+      const confirmHistory = confirm(`⚠️ EL KILOMETRAJE ES MENOR AL ACTUAL (${vehicle.odometer} KM). ¿SÍ ES UN REGISTRO HISTÓRICO?`);
+      if (!confirmHistory) return;
+    }
+
+    const { error } = await supabase.from('trip_logs').insert([{
+      vehicle_id: vehicle.id,
+      odometer_km: newKm,
+      created_at: new Date(formDate + 'T12:00:00').toISOString(),
+      user_id: user?.id
+    }]);
+
+    if (!error) {
+      if (newKm > vehicle.odometer) await updateVehicleOdo(newKm);
+      fetchDashboardData();
+      setIsTripFormOpen(false);
+      setIsManualTypeModalOpen(false);
+    }
+  };
+
+  const handleFuelRegistry = async () => {
+    if (!vehicle || !fuelForm.km || !fuelForm.gallons || !fuelForm.price) return;
+    const newKm = parseInt(fuelForm.km, 10);
+    if (isNaN(newKm)) return;
+
+    // VALIDACIÓN: Permitir KM menor con confirmación
+    if (newKm < vehicle.odometer) {
+      const confirmHistory = confirm(`⚠️ EL KILOMETRAJE ES MENOR AL ACTUAL (${vehicle.odometer} KM). ¿SÍ ES UN REGISTRO HISTÓRICO?`);
+      if (!confirmHistory) return;
+    }
+
+    const { error } = await supabase.from('fuel_logs').insert([{
+      vehicle_id: vehicle.id,
+      odometer_km: newKm,
+      gallons: Number(fuelForm.gallons),
+      total_price: Number(fuelForm.price),
+      station_name: fuelForm.station || 'S/N',
+      created_at: new Date(formDate + 'T12:00:00').toISOString(),
+      user_id: user?.id
+    }]);
+
+    if (!error) {
+      if (newKm > vehicle.odometer) await updateVehicleOdo(newKm);
+      fetchDashboardData();
+      setIsFuelFormOpen(false);
+      setIsManualTypeModalOpen(false);
+    }
   };
 
   const handleOdorCapture = async (newValue: number) => {
     if (!vehicle) return;
-
-    // Actualizar en Supabase
-    const { error } = await supabase
-      .from('vehicles')
-      .update({ odometer: newValue })
-      .eq('id', vehicle.id);
-
-    if (!error) {
-      setVehicle({ ...vehicle, odometer: newValue });
-    }
+    await updateVehicleOdo(newValue);
     setIsScannerOpen(false);
+    setIsSelectionModalOpen(false);
   };
 
-  if (loading) return <div className="p-20 text-white font-mono animate-pulse">SINCRONIZANDO_CON_SISTEMA...</div>;
-  if (!vehicle) return <div className="p-20 text-white font-mono">ERROR: UNIDAD_NO_ENCONTRADA_EN_ESQUEMA</div>;
+  if (loading) return <div className="p-20 text-[var(--color-neon-blue)] flex flex-col justify-center items-center text-center font-mono animate-pulse tracking-widest uppercase">Sincronizando_con_Sistema...</div>;
+  if (!vehicle) return (
+    <div className="h-[80vh] flex items-center justify-center p-6 animate-in fade-in duration-700">
+      <div className="glass-card max-w-lg w-full p-10 text-center border-dashed border-2 border-white/10">
+        <div className="w-20 h-20 bg-white/5 rounded-full flex justify-center items-center mx-auto mb-6">
+          <AlertTriangle className="text-[var(--color-text-secondary)]" size={40} />
+        </div>
+        <h2 className="text-2xl font-industrial font-bold italic tracking-tighter text-white mb-2 uppercase">GARAJE_VACÍO</h2>
+        <p className="text-[12px] text-[var(--color-text-secondary)] font-mono tracking-widest uppercase mb-8 leading-relaxed">
+          NO SE HA DETECTADO NINGUNA UNIDAD VINCULADA A TU PERFIL DE OPERADOR. REGISTRA UNA PARA DESBLOQUEAR EL PANEL.
+        </p>
+        <Link 
+          to="/garage"
+          className="inline-flex items-center justify-center gap-3 bg-[var(--color-neon-green)] text-black font-bold uppercase text-xs py-4 px-8 rounded-xl tracking-[0.2em] hover:scale-105 transition-all shadow-[0_0_20px_rgba(57,255,20,0.3)]"
+        >
+          <Plus size={16} /> REGISTRAR_PRIMERA_UNIDAD
+        </Link>
+      </div>
+    </div>
+  );
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
 
@@ -68,10 +208,10 @@ const Dashboard = () => {
             DIAGNÓSTICOS
           </button>
           <button
-            onClick={() => setIsScannerOpen(true)}
+            onClick={() => setIsSelectionModalOpen(true)}
             className="bg-[var(--color-neon-green)] hover:scale-105 active:scale-95 text-black font-bold uppercase text-[10px] py-3 px-8 rounded-full tracking-widest transition-all flex items-center gap-2 shadow-[var(--shadow-neon)]"
           >
-            <span className="text-lg leading-none">+</span> NUEVO DESPLIEGUE
+            <span className="text-lg leading-none">+</span> NUEVA SALIDA
           </button>
         </div>
       </header>
@@ -161,7 +301,10 @@ const Dashboard = () => {
           <div className="flex justify-between items-end">
             <div>
               <div className="text-[var(--color-text-secondary)] text-[10px] uppercase tracking-[0.3em] mb-2 font-mono">Consumo_Mensual</div>
-              <h3 className="text-5xl font-bold tracking-tighter text-white font-sans">$120<span className="text-xl text-[var(--color-text-secondary)]">.50</span></h3>
+              <h3 className="text-5xl font-bold tracking-tighter text-white font-sans">
+                ${monthlyExpense.toFixed(2).split('.')[0]}
+                <span className="text-xl text-[var(--color-text-secondary)]">.{monthlyExpense.toFixed(2).split('.')[1]}</span>
+              </h3>
             </div>
             <div className="flex gap-1.5 items-end h-[40px]">
               {[0.4, 0.6, 0.3, 0.8, 0.5, 1].map((h, i) => (
@@ -184,10 +327,9 @@ const Dashboard = () => {
             <div className="text-[var(--color-neon-blue)] text-[9px] font-bold tracking-[0.3em] uppercase font-mono">ÍNDICE_RENDIMIENTO</div>
           </div>
           <div>
-            <div className="text-[var(--color-text-secondary)] text-[10px] uppercase tracking-[0.3em] mb-2 font-mono">Tasa_Optimización</div>
             <div className="flex items-baseline gap-2 mb-4">
-              <h3 className="text-5xl font-bold tracking-tighter text-white">{vehicle.avg_consumption || '4.2'}</h3>
-              <span className="text-[var(--color-neon-blue)] text-xs font-industrial font-bold italic tracking-widest uppercase">L/100KM</span>
+              <h3 className="text-5xl font-bold tracking-tighter text-white">{efficiency || '—'}</h3>
+              <span className="text-[var(--color-neon-blue)] text-xs font-industrial font-bold italic tracking-widest uppercase">KM/GAL</span>
             </div>
             <div className="flex items-center gap-2 text-[var(--color-neon-green)] text-[9px] uppercase font-bold tracking-[0.2em] bg-[var(--color-neon-green)]/10 px-3 py-1.5 rounded-full w-max">
               <span className="relative flex h-2 w-2">
@@ -203,7 +345,7 @@ const Dashboard = () => {
       {/* Modern Detailed Log Table */}
       <section className="glass-card overflow-hidden">
         <div className="px-8 py-6 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
-          <h3 className="font-industrial font-bold italic tracking-[0.3em] text-[var(--color-text-secondary)] text-xs uppercase">TRANSMISIONES_TÁCTICAS</h3>
+          <h3 className="font-industrial font-bold italic tracking-[0.3em] text-[var(--color-text-secondary)] text-xs uppercase">REGISTRO_HISTÓRICO</h3>
           <div className="flex gap-4">
             <div className="px-3 py-1 bg-white/5 rounded border border-white/10 text-[8px] font-mono text-[var(--color-text-secondary)]">ESTADO_LOG: SEGURO</div>
             <button className="text-[var(--color-neon-green)] font-bold text-[9px] tracking-[0.3em] hover:text-white transition-colors uppercase font-mono">DESCIFRAR_HISTORIAL_COMPLETO</button>
@@ -211,11 +353,7 @@ const Dashboard = () => {
         </div>
 
         <div className="w-full">
-          {[
-            { type: 'REFILL', title: 'CONSOLIDACIÓN COMBUSTIBLE', detail: 'SHELL SECTOR-7 • 12.5L', value: '-$22.40', time: 'HACE 1 DÍA', icon: Fuel, color: '[var(--color-neon-green)]' },
-            { type: 'ANALYSIS', title: 'SINCRO CINÉTICA FRENOS', detail: 'HANGAR INGENIERÍA • OK', value: 'VERIFICADO', time: '12 MAY, 2024', icon: Wrench, color: '[var(--color-neon-blue)]' },
-            { type: 'DETAILING', title: 'LIMPIEZA AERODINÁMICA', detail: 'ZONA SANITARIA • COMPLETO', value: '-$15.00', time: '10 MAY, 2024', icon: CheckSquare, color: '[var(--color-text-secondary)]' }
-          ].map((row, i) => (
+          {recentTransmissions.map((row, i) => (
             <div key={i} className="px-8 py-6 flex items-center justify-between hover:bg-white/[0.03] transition-all group border-b border-white/5 last:border-0 cursor-pointer">
               <div className="flex items-center gap-8">
                 <div
@@ -225,19 +363,224 @@ const Dashboard = () => {
                   <row.icon size={20} className="group-hover:scale-110 transition-transform" />
                 </div>
                 <div>
-                  <h4 className="font-industrial font-bold italic tracking-widest text-white uppercase text-sm mb-1 group-hover:text-[var(--color-neon-green)] transition-colors">{row.title}</h4>
-                  <div className="text-[var(--color-text-secondary)] text-[10px] uppercase tracking-[0.2em] font-mono opacity-60">{row.detail}</div>
+                  <h4 className="font-industrial font-bold italic tracking-widest text-white uppercase text-sm mb-1 group-hover:text-[var(--color-neon-green)] transition-colors">
+                    {row.type === 'FUEL' ? row.station_name : 'REGISTRO_SALIDA'}
+                  </h4>
+                  <div className="text-[var(--color-text-secondary)] text-[10px] uppercase tracking-[0.2em] font-mono opacity-60">
+                    {row.type === 'FUEL' ? `${row.gallons} GAL • ${row.odometer_km} KM` : `RUTA_VIAJE • ${row.odometer_km} KM`}
+                  </div>
                 </div>
               </div>
               <div className="text-right">
-                <div className={`font-bold text-sm mb-1 tracking-tight ${row.value === 'VERIFIED' ? 'text-[var(--color-neon-green)]' : 'text-white'}`}>{row.value}</div>
-                <div className="text-[var(--color-text-secondary)] text-[9px] uppercase tracking-[0.2em] font-mono">{row.time}</div>
+                <div className={`font-bold text-sm mb-1 tracking-tight ${row.type === 'FUEL' ? 'text-[var(--color-neon-green)]' : 'text-white'}`}>
+                  {row.type === 'FUEL' ? `$${row.total_price}` : 'OK'}
+                </div>
+                <div className="text-[var(--color-text-secondary)] text-[9px] uppercase tracking-[0.2em] font-mono">
+                  {new Date(row.created_at).toLocaleDateString()}
+                </div>
               </div>
             </div>
           ))}
         </div>
       </section>
 
+      {/* Manual Selection Modal */}
+      {isManualTypeModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/90 backdrop-blur-md">
+          <div className="glass-card w-full max-w-md p-8 premium-border">
+            <div className="premium-border-inner p-8 text-center">
+              <div className="flex justify-between items-start mb-10 text-left">
+                <div>
+                  <h2 className="text-3xl font-industrial font-bold italic tracking-tighter text-white uppercase">TIPO_REGISTRO</h2>
+                  <p className="text-[10px] text-[var(--color-text-secondary)] font-mono tracking-[0.3em] uppercase mt-1">SELECCIÓN_FLUJO // MANUAL</p>
+                </div>
+                <button onClick={() => setIsManualTypeModalOpen(false)} className="text-[var(--color-text-secondary)] hover:text-white transition-colors">
+                  <span className="text-2xl">×</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-6">
+                <button
+                  onClick={() => setIsTripFormOpen(true)}
+                  className="group flex flex-col items-center gap-4 p-8 bg-white/5 border border-white/10 rounded-2xl hover:border-[var(--color-neon-blue)] hover:bg-[var(--color-neon-blue)]/5 transition-all"
+                >
+                  <div className="w-16 h-16 rounded-full bg-[var(--color-neon-blue)]/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <MapPin className="text-[var(--color-neon-blue)]" size={32} />
+                  </div>
+                  <span className="block font-industrial font-bold text-white tracking-widest uppercase">SALIDA</span>
+                </button>
+
+                <button
+                  onClick={() => setIsFuelFormOpen(true)}
+                  className="group flex flex-col items-center gap-4 p-8 bg-white/5 border border-white/10 rounded-2xl hover:border-[var(--color-neon-green)] hover:bg-[var(--color-neon-green)]/5 transition-all"
+                >
+                  <div className="w-16 h-16 rounded-full bg-[var(--color-neon-green)]/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Fuel className="text-[var(--color-neon-green)]" size={32} />
+                  </div>
+                  <span className="block font-industrial font-bold text-white tracking-widest uppercase">COMBUSTIBLE</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Form REGISTRO_SALIDA */}
+      {isTripFormOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-6 bg-black/95 backdrop-blur-md">
+          <div className="glass-card w-full max-w-sm p-8 premium-border">
+            <div className="premium-border-inner p-8">
+              <div className="flex justify-between items-start mb-8">
+                <h2 className="text-2xl font-industrial font-bold italic text-white uppercase">REGISTRO_SALIDA</h2>
+                <button onClick={() => setIsTripFormOpen(false)} className="text-[var(--color-text-secondary)]">×</button>
+              </div>
+              <div className="space-y-6">
+                <div>
+                  <label className="text-[10px] text-[var(--color-text-secondary)] font-mono uppercase block mb-2">KILOMETRAJE_ACTUAL</label>
+                  <input
+                    type="number"
+                    value={manualValue}
+                    onChange={(e) => setManualValue(e.target.value)}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl py-4 px-6 text-xl text-white font-bold"
+                    placeholder={vehicle.odometer.toString()}
+                  />
+                </div>
+                <div className="p-4 bg-white/5 rounded-xl border border-white/5">
+                  <span className="text-[9px] text-[var(--color-text-secondary)] font-mono uppercase block mb-1">FECHA_REGISTRO</span>
+                  <input
+                    type="date"
+                    value={formDate}
+                    onChange={(e) => setFormDate(e.target.value)}
+                    className="w-full bg-transparent text-white font-bold text-xs uppercase focus:outline-none"
+                  />
+                </div>
+                <button onClick={handleTripRegistry} className="w-full py-4 bg-[var(--color-neon-blue)] text-black font-bold rounded-xl uppercase">GUARDAR_SALIDA</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Form CARGA_COMBUSTIBLE */}
+      {isFuelFormOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-6 bg-black/95 backdrop-blur-md">
+          <div className="glass-card w-full max-w-md p-8 premium-border">
+            <div className="premium-border-inner p-8">
+              <div className="flex justify-between items-start mb-8">
+                <h2 className="text-2xl font-industrial font-bold italic text-white uppercase">CARGA_COMBUSTIBLE</h2>
+                <button onClick={() => setIsFuelFormOpen(false)} className="text-[var(--color-text-secondary)]">×</button>
+              </div>
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="col-span-2">
+                  <label className="text-[10px] text-[var(--color-text-secondary)] font-mono uppercase block mb-2">KILOMETRAJE_ESTACIÓN</label>
+                  <input
+                    type="number"
+                    value={fuelForm.km}
+                    onChange={(e) => setFuelForm({...fuelForm, km: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl py-3 px-4 text-white font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-[var(--color-text-secondary)] font-mono uppercase block mb-2">GALONES_L</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={fuelForm.gallons}
+                    onChange={(e) => setFuelForm({...fuelForm, gallons: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl py-3 px-4 text-white font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-[var(--color-text-secondary)] font-mono uppercase block mb-2">PRECIO_TOTAL</label>
+                  <input
+                    type="number"
+                    value={fuelForm.price}
+                    onChange={(e) => setFuelForm({...fuelForm, price: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl py-3 px-4 text-white font-bold"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] text-[var(--color-text-secondary)] font-mono uppercase block mb-2">NOMBRE_ESTACIÓN</label>
+                  <input
+                    type="text"
+                    value={fuelForm.station}
+                    onChange={(e) => setFuelForm({...fuelForm, station: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl py-3 px-4 text-white font-bold"
+                    placeholder="S/N"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] text-[var(--color-text-secondary)] font-mono uppercase block mb-2">FECHA_REGISTRO</label>
+                  <input
+                    type="date"
+                    value={formDate}
+                    onChange={(e) => setFormDate(e.target.value)}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl py-3 px-4 text-white font-bold"
+                  />
+                </div>
+              </div>
+              
+              {fuelForm.gallons && fuelForm.price && (
+                <div className="mb-6 p-4 bg-[var(--color-neon-green)]/10 border border-[var(--color-neon-green)]/30 rounded-xl flex justify-between items-center">
+                  <span className="text-[9px] font-mono text-[var(--color-neon-green)] uppercase">Precio_Por_Galón</span>
+                  <span className="text-white font-bold font-industrial">
+                    ${(Number(fuelForm.price) / Number(fuelForm.gallons)).toFixed(2)}
+                  </span>
+                </div>
+              )}
+
+              <button onClick={handleFuelRegistry} className="w-full py-4 bg-[var(--color-neon-green)] text-black font-bold rounded-xl uppercase">REGISTRAR_TANQUEO</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Selection Modal (Escanear vs Escribir) */}
+      {isSelectionModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/90 backdrop-blur-md">
+          <div className="glass-card w-full max-w-md p-8 premium-border">
+            <div className="premium-border-inner p-8 text-center">
+              <div className="flex justify-between items-start mb-10 text-left">
+                <div>
+                  <h2 className="text-3xl font-industrial font-bold italic tracking-tighter text-white uppercase">SISTEMA_CAPTURA</h2>
+                  <p className="text-[10px] text-[var(--color-text-secondary)] font-mono tracking-[0.3em] uppercase mt-1">NÚCLEO_CONTROL // ALPHA_01</p>
+                </div>
+                <button onClick={() => setIsSelectionModalOpen(false)} className="text-[var(--color-text-secondary)] hover:text-white transition-colors">
+                  <span className="text-2xl">×</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-6 mb-4">
+                <button
+                  onClick={() => {
+                    setIsSelectionModalOpen(false);
+                    setIsScannerOpen(true);
+                  }}
+                  className="group flex flex-col items-center gap-4 p-8 bg-white/5 border border-white/10 rounded-2xl hover:border-[var(--color-neon-blue)] hover:bg-[var(--color-neon-blue)]/5 transition-all"
+                >
+                  <div className="w-16 h-16 rounded-full bg-[var(--color-neon-blue)]/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Camera className="text-[var(--color-neon-blue)]" size={32} />
+                  </div>
+                  <span className="block font-industrial font-bold text-white tracking-widest uppercase">ESCANEAR</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setIsSelectionModalOpen(false);
+                    setIsManualTypeModalOpen(true);
+                  }}
+                  className="group flex flex-col items-center gap-4 p-8 bg-white/5 border border-white/10 rounded-2xl hover:border-[var(--color-neon-green)] hover:bg-[var(--color-neon-green)]/5 transition-all"
+                >
+                  <div className="w-16 h-16 rounded-full bg-[var(--color-neon-green)]/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Edit3 className="text-[var(--color-neon-green)]" size={32} />
+                  </div>
+                  <span className="block font-industrial font-bold text-white tracking-widest uppercase">ESCRIBIR</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {isScannerOpen && (
         <OCRScanner
           onCapture={handleOdorCapture}

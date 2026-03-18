@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { MapPin, Gauge, Activity, ShieldCheck, Loader2, Trash2, Edit3, Upload } from 'lucide-react';
 
 const Garage = () => {
+  const { user } = useAuth();
   const [vehicles, setVehicles] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -29,6 +31,7 @@ const Garage = () => {
     const { data } = await supabase
       .from('vehicles')
       .select('*')
+      .eq('user_id', user?.id)
       .order('created_at', { ascending: false });
 
     if (data) setVehicles(data);
@@ -80,7 +83,7 @@ const Garage = () => {
     e.preventDefault();
     const { data, error } = await supabase
       .from('vehicles')
-      .insert([newVehicle])
+      .insert([{ ...newVehicle, user_id: user?.id }])
       .select();
 
     if (error) {

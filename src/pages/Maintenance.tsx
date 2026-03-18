@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { Wrench, Clock, FileText, ChevronRight, Activity, Plus, CheckCircle2, Loader2, Calendar } from 'lucide-react';
 
 const Maintenance = () => {
+  const { user } = useAuth();
   const [vehicles, setVehicles] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
@@ -37,9 +39,9 @@ const Maintenance = () => {
   const fetchData = async () => {
     setLoading(true);
     const [vRes, tRes, lRes] = await Promise.all([
-      supabase.from('vehicles').select('*'),
-      supabase.from('scheduled_tasks').select('*, vehicles(name)'),
-      supabase.from('vehicle_logs').select('*, vehicles(name)').order('created_at', { ascending: false })
+      supabase.from('vehicles').select('*').eq('user_id', user?.id),
+      supabase.from('scheduled_tasks').select('*, vehicles(name)').eq('user_id', user?.id),
+      supabase.from('vehicle_logs').select('*, vehicles(name)').eq('user_id', user?.id).order('created_at', { ascending: false })
     ]);
 
     if (vRes.data) setVehicles(vRes.data);
@@ -58,7 +60,8 @@ const Maintenance = () => {
       title: newLog.title,
       value: newLog.value,
       odometer_at_entry: newLog.odometer_at_entry,
-      created_at: newLog.service_date // Usamos la fecha seleccionada
+      created_at: newLog.service_date,
+      user_id: user?.id
     }]);
 
     if (logError) {
@@ -82,7 +85,7 @@ const Maintenance = () => {
 
   const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { error } = await supabase.from('scheduled_tasks').insert([newTask]);
+    const { error } = await supabase.from('scheduled_tasks').insert([{ ...newTask, user_id: user?.id }]);
     if (error) {
       alert(error.message);
     } else {

@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { FileText, Plus, Calendar, Loader2, Trash2, Edit3, ExternalLink, Upload, AlertCircle, CheckCircle2, Circle } from 'lucide-react';
 
 const Documents = () => {
+  const { user } = useAuth();
   const [documents, setDocuments] = useState<any[]>([]);
   const [vehicles, setVehicles] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,8 +33,8 @@ const Documents = () => {
   const fetchData = async () => {
     setLoading(true);
     const [dRes, vRes] = await Promise.all([
-      supabase.from('vehicle_documents').select('*, vehicles(name)').order('expiry_date', { ascending: true }),
-      supabase.from('vehicles').select('*')
+      supabase.from('vehicle_documents').select('*, vehicles(name)').eq('user_id', user?.id).order('expiry_date', { ascending: true }),
+      supabase.from('vehicles').select('*').eq('user_id', user?.id)
     ]);
 
     if (dRes.data) setDocuments(dRes.data);
@@ -96,7 +98,7 @@ const Documents = () => {
 
   const handleAddDocument = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { error } = await supabase.from('vehicle_documents').insert([newDoc]);
+    const { error } = await supabase.from('vehicle_documents').insert([{ ...newDoc, user_id: user?.id }]);
     if (error) {
       setAlertInfo({ message: error.message, type: 'error' });
     } else {
